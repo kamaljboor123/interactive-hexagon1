@@ -1,0 +1,635 @@
+<!DOCTYPE html>
+<html lang="ar">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0, touch-action: manipulation">
+    <title>بازل المسدس - صفحة فكرة وتطبيق ذكي</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;700;900&display=swap');
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: 'Cairo', Arial, sans-serif;
+            touch-action: none;
+            background: #f5f2ed;
+        }
+        #top-bar {
+            position: absolute;
+            top: 8px;
+            left: 8px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            z-index: 10;
+        }
+        .btn {
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-size: 10px;
+            cursor: pointer;
+            z-index: 10;
+            border: none;
+            color: white;
+            white-space: nowrap;
+            width: fit-content;
+            font-family: 'Cairo', sans-serif;
+            font-weight: 700;
+        }
+        .btn.solve { background: #0a0; }
+        .btn.alt { background: #f90; }
+        .btn.switch { background: #ff69b4; }
+        .btn.rotate { background: #08c; }
+        .btn.reset-btn { background: #c00; }
+        #side-btns {
+            position: absolute;
+            top: 8px;
+            right: 5px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            z-index: 10;
+        }
+        #info {
+            position: absolute;
+            bottom: 8px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 3px 12px;
+            border-radius: 12px;
+            font-size: 9px;
+            z-index: 10;
+            font-family: 'Cairo', sans-serif;
+        }
+        #selected-indicator {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 150, 255, 0.8);
+            color: white;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 12px;
+            z-index: 10;
+            font-family: 'Cairo', sans-serif;
+            display: none;
+            pointer-events: none;
+        }
+    </style>
+    <script type="importmap">
+        { "imports": { "three": "https://unpkg.com/three@0.157.0/build/three.module.js" } }
+    </script>
+</head>
+<body>
+    <div id="top-bar">
+        <button id="switch-btn" class="btn switch">💎 النسخة الزجاجية</button>
+        <button id="solve-btn" class="btn solve">✨ حل صحيح</button>
+        <button id="solve-alt-btn" class="btn alt">🔀 حل بديل</button>
+    </div>
+    <div id="side-btns">
+        <button id="rotate-cw-btn" class="btn rotate">↻ تدوير</button>
+        <button id="rotate-ccw-btn" class="btn rotate">↺ عكس</button>
+        <button id="reset-btn" class="btn reset-btn">⟳ إعادة</button>
+    </div>
+    <div id="selected-indicator">تم تحديد قطعة - استخدم أزرار التدوير</div>
+    <div id="info">🟦 بازل المسدس | صفحة فكرة وتطبيق ذكي</div>
+
+    <script type="module">
+        import * as THREE from 'three';
+
+        let isGlass = false;
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0xf5f2ed);
+        const camera = new THREE.OrthographicCamera();
+        camera.position.set(0, 0, 10);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.sortObjects = true;
+        document.body.appendChild(renderer.domElement);
+
+        const sqrt3 = Math.sqrt(3);
+        const R = 14 / sqrt3;
+        const pieceDepth = 0.5;
+        const gap = 0.12;
+        const wallThick = 0.6;
+        const innerR = R + gap;
+        const outerR = innerR + wallThick;
+        const boxHeight = pieceDepth * 2.0;
+        const boxY = outerR + 0.2;
+        const frameWidth = 22;
+        const frameHeight = 13;
+        const frameY = -frameHeight / 2 - 1.0;
+        const frameZ = -0.2;
+
+        const ROTATION_ANGLE = Math.PI / 12;
+
+        const perim = [], hexV = [];
+        for (let i = 0; i < 6; i++) {
+            const a = (Math.PI / 2) - i * (Math.PI / 3);
+            hexV.push(new THREE.Vector2(R * Math.cos(a), R * Math.sin(a)));
+        }
+        for (let i = 0; i < 6; i++) {
+            const v1 = hexV[i], v2 = hexV[(i + 1) % 6];
+            for (let s = 0; s < 3; s++) {
+                const t = s / 3;
+                perim.push(new THREE.Vector2(v1.x * (1 - t) + v2.x * t, v1.y * (1 - t) + v2.y * t));
+            }
+        }
+
+        function intersect(p1, p2, p3, p4) {
+            const d = (p1.x - p2.x) * (p3.y - p4.y) - (p1.y - p2.y) * (p3.x - p4.x);
+            if (Math.abs(d) < 0.0001) return null;
+            const t = ((p1.x - p3.x) * (p3.y - p4.y) - (p1.y - p3.y) * (p3.x - p4.x)) / d;
+            const u = -((p1.x - p2.x) * (p1.y - p3.y) - (p1.y - p2.y) * (p1.x - p3.x)) / d;
+            if (t >= 0 && t <= 1 && u >= 0 && u <= 1) return new THREE.Vector2(p1.x + t * (p2.x - p1.x), p1.y + t * (p2.y - p1.y));
+            return null;
+        }
+
+        const lines = [[0,9],[3,12],[6,15],[10,17],[11,16],[2,13],[1,14],[0,9],[1,10],[2,11],[3,12],[4,13],[5,14],[6,15],[7,16],[8,17],[2,7],[5,10]].map(([i, j]) => ({ p1: perim[i], p2: perim[j] }));
+        const intPts = [], intSet = new Set();
+        for (let i = 0; i < lines.length; i++)
+            for (let j = i + 1; j < lines.length; j++) {
+                const p = intersect(lines[i].p1, lines[i].p2, lines[j].p1, lines[j].p2);
+                if (p && Math.sqrt(p.x**2 + p.y**2) < R - 0.01 && !intSet.has(`${p.x.toFixed(4)},${p.y.toFixed(4)}`)) {
+                    intSet.add(`${p.x.toFixed(4)},${p.y.toFixed(4)}`);
+                    intPts.push(p);
+                }
+            }
+
+        const T = i => intPts[i];
+        const T4 = T(3), T5 = T(4), T9 = T(8), T11 = T(10), T12 = T(11), T13 = T(12);
+        const L = (a,b) => ({ p1: perim[a], p2: perim[b] });
+        const T8 = intersect(...Object.values(L(8,13)), ...Object.values(L(1,12)));
+        const T21 = intersect(...Object.values(L(8,13)), ...Object.values(L(4,11)));
+        const T22 = intersect(...Object.values(L(7,14)), ...Object.values(L(5,10)));
+        const T23 = intersect(...Object.values(L(8,13)), ...Object.values(L(0,9)));
+        const P = i => perim[i];
+        const p1 = P(0), p4 = P(3), p5 = P(4), p7 = P(6), p8 = P(7), p10 = P(9);
+        const p12 = P(11), p13 = P(12), p14 = P(13), p16 = P(15), p18 = P(17);
+        const sR = R / 3, sV = [];
+        for (let i = 0; i < 6; i++) {
+            const a = (Math.PI / 2) - i * (Math.PI / 3);
+            sV.push(new THREE.Vector2(sR * Math.cos(a), sR * Math.sin(a)));
+        }
+        const [A, B, C, D, E, F] = sV;
+
+        const regions = [
+            [p1, p4, p5, T4],
+            [p10, T23, T22, p8],
+            [A, T4, T9, B],
+            [p5, T9, T12, T22, p8, p7],
+            [T5, T12, T9, B, C, D],
+            [p1, A, T13, p18],
+            [p18, T13, T11, p16],
+            [A, p14, p16, T11, T13],
+            [p10, p12, T21, T8, E, D],
+            [p12, T21, T8, E, F, p14, p13]
+        ];
+
+        const classicColors = [0x0066ff, 0x00cc44, 0xffdd00, 0x9933ff, 0xff8800, 0xff69b4, 0x00ccff, 0xcd7f32, 0x8B008B, 0x008B8B];
+        const glassColors = [0xE0115F, 0x50C878, 0xFFC87C, 0x9966CC, 0x0F52BA, 0xE4D00A, 0x7FFFD4, 0xB8312F, 0x40E0D0, 0x26619C];
+
+        let pieces = [], correctPositions = [], alternativePositions = [];
+        let targetPositions, targetRotations;
+        let selected = null;
+
+        const defaultArrangement = {
+            positions: [
+                { x: 2.54, y: -7.54 },
+                { x: 2.96, y: -11.56 },
+                { x: -1.84, y: -11.67 },
+                { x: 6.98, y: -10.37 },
+                { x: -1.21, y: -9.72 },
+                { x: 7.61, y: -3.83 },
+                { x: -6.61, y: -11.51 },
+                { x: -5.57, y: -7.00 },
+                { x: 3.79, y: -3.81 },
+                { x: -0.89, y: -3.88 },
+                { x: -6.06, y: -3.88 }
+            ],
+            rotations: [0, 0, -2.0944, 0, 2.0944, 0, 3.1416, 0, 0, -1.0472, 0]
+        };
+
+        function calcCenter(pts) {
+            const c = new THREE.Vector2();
+            pts.forEach(p => c.add(p));
+            return c.divideScalar(pts.length);
+        }
+
+        function rotatePt(p, angle) {
+            return new THREE.Vector2(p.x * Math.cos(angle) - p.y * Math.sin(angle), p.x * Math.sin(angle) + p.y * Math.cos(angle));
+        }
+
+        function createCircularText(text, radius, centerX, centerY, z, fontSize, color, circleAlpha = 0.2) {
+            const canvas = document.createElement('canvas');
+            const size = 512;
+            canvas.width = size;
+            canvas.height = size;
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, size, size);
+
+            const chars = text.split('');
+            const totalAngle = Math.PI * 1.5;
+            const startAngle = -Math.PI / 2 + totalAngle / 2;
+            const angleStep = -totalAngle / (chars.length - 1);
+            const textRadius = size * 0.35;
+
+            ctx.font = `bold ${fontSize}px 'Cairo', sans-serif`;
+            ctx.fillStyle = color;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+
+            chars.forEach((char, i) => {
+                const angle = startAngle + i * angleStep;
+                const x = size / 2 + Math.cos(angle) * textRadius;
+                const y = size / 2 + Math.sin(angle) * textRadius;
+                ctx.save();
+                ctx.translate(x, y);
+                ctx.rotate(angle + Math.PI / 2);
+                ctx.fillText(char, 0, 0);
+                ctx.restore();
+            });
+
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 3;
+            ctx.globalAlpha = circleAlpha;
+            ctx.beginPath();
+            ctx.arc(size / 2, size / 2, textRadius + 35, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.arc(size / 2, size / 2, textRadius - 35, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.globalAlpha = 1;
+
+            const texture = new THREE.CanvasTexture(canvas);
+            texture.needsUpdate = true;
+            const material = new THREE.MeshBasicMaterial({
+                map: texture,
+                transparent: true,
+                depthWrite: false,
+                depthTest: true,
+                side: THREE.DoubleSide
+            });
+            const planeSize = radius * 1.8;
+            const geometry = new THREE.PlaneGeometry(planeSize, planeSize);
+            const mesh = new THREE.Mesh(geometry, material);
+            mesh.position.set(centerX, centerY, z);
+            mesh.renderOrder = 10;
+            mesh.raycast = () => {};
+            return mesh;
+        }
+
+        function applyArrangement(arrangement) {
+            if (!pieces.length) return;
+            for (let i = 0; i < pieces.length; i++) {
+                if (arrangement.positions[i]) {
+                    pieces[i].position.set(arrangement.positions[i].x, arrangement.positions[i].y, 0);
+                    pieces[i].rotation.set(0, 0, arrangement.rotations[i] || 0);
+                }
+            }
+        }
+
+        function updateSelectedIndicator() {
+            const indicator = document.getElementById('selected-indicator');
+            if (selected) {
+                indicator.style.display = 'block';
+            } else {
+                indicator.style.display = 'none';
+            }
+        }
+
+        function buildScene() {
+            while (scene.children.length > 0) scene.remove(scene.children[0]);
+            scene.background = new THREE.Color(isGlass ? 0x1a1a2e : 0xf5f2ed);
+            document.body.style.background = isGlass ? '#1a1a2e' : '#f5f2ed';
+
+            if (isGlass) {
+                scene.add(new THREE.AmbientLight(0x2a2a4a, 0.8));
+                const dl = new THREE.DirectionalLight(0xffeedd, 1.5); dl.position.set(5, 15, 10); scene.add(dl);
+                const bl = new THREE.DirectionalLight(0x4488ff, 0.6); bl.position.set(-5, -5, 5); scene.add(bl);
+                const tl = new THREE.PointLight(0xffd700, 0.8, 30); tl.position.set(0, boxY + outerR + 3, 5); scene.add(tl);
+            } else {
+                scene.add(new THREE.AmbientLight(0xffffff, 1.2));
+                const dl = new THREE.DirectionalLight(0xffffff, 0.8); dl.position.set(5, 15, 10); scene.add(dl);
+            }
+
+            const fw = frameWidth / 2, fh = frameHeight / 2;
+            const fc = isGlass ? 0xffd700 : 0x000000;
+            const fpts = [new THREE.Vector3(-fw, frameY - fh, frameZ), new THREE.Vector3(fw, frameY - fh, frameZ), new THREE.Vector3(fw, frameY + fh, frameZ), new THREE.Vector3(-fw, frameY + fh, frameZ), new THREE.Vector3(-fw, frameY - fh, frameZ)];
+            const frameLine = new THREE.Line(new THREE.BufferGeometry().setFromPoints(fpts), new THREE.LineBasicMaterial({ color: fc }));
+            frameLine.renderOrder = -2; scene.add(frameLine);
+
+            const frameTextColor = isGlass ? '#ffd700' : '#000000';
+            const frameTextMesh = createCircularText(
+                'صفحة فكرة وتطبيق ذكي',
+                5.5,
+                0,
+                frameY,
+                frameZ + 0.1,
+                28,
+                frameTextColor,
+                0.2
+            );
+            frameTextMesh.renderOrder = 5;
+            scene.add(frameTextMesh);
+
+            const boxGroup = new THREE.Group();
+            const outer = new THREE.Shape(), inner = new THREE.Shape();
+            for (let i = 0; i < 6; i++) {
+                const a = (Math.PI / 2) - i * (Math.PI / 3);
+                const xo = outerR * Math.cos(a), yo = outerR * Math.sin(a), xi = innerR * Math.cos(a), yi = innerR * Math.sin(a);
+                i === 0 ? outer.moveTo(xo, yo) : outer.lineTo(xo, yo);
+                i === 0 ? inner.moveTo(xi, yi) : inner.lineTo(xi, yi);
+            }
+            outer.closePath(); inner.closePath();
+            const wall = new THREE.Shape(); wall.moveTo(outer.currentPoint.x, outer.currentPoint.y);
+            outer.getPoints().forEach(p => wall.lineTo(p.x, p.y)); wall.holes.push(inner);
+            const wallGeo = new THREE.ExtrudeGeometry(wall, { depth: boxHeight, bevelEnabled: isGlass, bevelThickness: isGlass ? 0.08 : 0, bevelSize: isGlass ? 0.08 : 0, bevelSegments: isGlass ? 5 : 1 });
+            let wallMat, baseMat;
+            if (isGlass) {
+                wallMat = new THREE.MeshPhysicalMaterial({ color: 0xffd700, metalness: 0.9, roughness: 0.2, clearcoat: 1, clearcoatRoughness: 0.1, transparent: true, opacity: 0.85, depthWrite: false, side: THREE.DoubleSide });
+                baseMat = new THREE.MeshStandardMaterial({ color: 0x1a1a2e, roughness: 0.4, metalness: 0.1, depthWrite: true, side: THREE.DoubleSide });
+            } else {
+                wallMat = new THREE.MeshStandardMaterial({ color: 0xc0a080, roughness: 0.5, metalness: 0.2, transparent: true, opacity: 0.65, depthWrite: false, side: THREE.DoubleSide });
+                baseMat = new THREE.MeshStandardMaterial({ color: 0x806040, roughness: 0.7, depthWrite: true, side: THREE.DoubleSide });
+            }
+            const wallMesh = new THREE.Mesh(wallGeo, wallMat); wallMesh.position.z = -boxHeight / 2; wallMesh.renderOrder = 0; boxGroup.add(wallMesh);
+
+            const centerTextMesh = createCircularText(
+                'صفحة فكرة وتطبيق ذكي',
+                innerR * 0.75,
+                0,
+                0,
+                -boxHeight / 2 + 0.05,
+                28,
+                isGlass ? '#ffd700' : '#ffffff'
+            );
+            boxGroup.add(centerTextMesh);
+
+            const baseMesh = new THREE.Mesh(new THREE.ShapeGeometry(inner), baseMat);
+            baseMesh.position.z = -boxHeight / 2 + 0.02;
+            baseMesh.renderOrder = 0;
+            baseMesh.material.transparent = true;
+            baseMesh.material.opacity = isGlass ? 0.25 : 0.45;
+            boxGroup.add(baseMesh);
+            boxGroup.position.set(0, boxY, 0);
+            scene.add(boxGroup);
+
+            pieces = []; correctPositions = []; alternativePositions = [];
+            const colors = isGlass ? glassColors : classicColors;
+
+            regions.forEach((pts, i) => {
+                const center = calcCenter(pts);
+                const cpts = pts.map(p => new THREE.Vector2(p.x - center.x, p.y - center.y));
+                const shape = new THREE.Shape(); shape.moveTo(cpts[0].x, cpts[0].y);
+                for (let j = 1; j < cpts.length; j++) shape.lineTo(cpts[j].x, cpts[j].y);
+                shape.closePath();
+                const geo = new THREE.ExtrudeGeometry(shape, { depth: pieceDepth, bevelEnabled: true, bevelThickness: isGlass ? 0.08 : 0.06, bevelSize: isGlass ? 0.08 : 0.06, bevelSegments: isGlass ? 3 : 2 });
+                let mat;
+                if (isGlass) mat = new THREE.MeshPhysicalMaterial({ color: colors[i], metalness: 0.1, roughness: 0.15, clearcoat: 0.8, clearcoatRoughness: 0.2, transparent: true, opacity: 0.85, depthWrite: true, depthTest: true, side: THREE.DoubleSide });
+                else mat = new THREE.MeshStandardMaterial({ color: colors[i], roughness: 0.4, metalness: 0.1, depthWrite: true, depthTest: true, side: THREE.DoubleSide });
+                const mesh = new THREE.Mesh(geo, mat); mesh.renderOrder = 1; mesh.userData = { realCenter: center, pieceIndex: i, isPiece: true };
+                if (isGlass) { const eg = new THREE.EdgesGeometry(geo); mesh.add(new THREE.LineSegments(eg, new THREE.LineBasicMaterial({ color: 0xffd700 }))); }
+                pieces.push(mesh); correctPositions.push(new THREE.Vector3(center.x, center.y + boxY, pieceDepth / 2));
+            });
+
+            const cc = isGlass ? 0xFF1493 : 0xff0000;
+            const rc = calcCenter(sV);
+            const cpts = sV.map(p => new THREE.Vector2(p.x - rc.x, p.y - rc.y));
+            const rshape = new THREE.Shape(); rshape.moveTo(cpts[0].x, cpts[0].y);
+            for (let j = 1; j < cpts.length; j++) rshape.lineTo(cpts[j].x, cpts[j].y);
+            rshape.closePath();
+            const rgeo = new THREE.ExtrudeGeometry(rshape, { depth: pieceDepth, bevelEnabled: true, bevelThickness: isGlass ? 0.08 : 0.06, bevelSize: isGlass ? 0.08 : 0.06, bevelSegments: isGlass ? 3 : 2 });
+            let rmat;
+            if (isGlass) rmat = new THREE.MeshPhysicalMaterial({ color: cc, metalness: 0.1, roughness: 0.15, clearcoat: 0.8, clearcoatRoughness: 0.2, transparent: true, opacity: 0.85, depthWrite: true, depthTest: true, side: THREE.DoubleSide });
+            else rmat = new THREE.MeshStandardMaterial({ color: cc, roughness: 0.4, metalness: 0.1, depthWrite: true, depthTest: true, side: THREE.DoubleSide });
+            const rmesh = new THREE.Mesh(rgeo, rmat); rmesh.renderOrder = 1; rmesh.userData = { realCenter: rc, pieceIndex: 10, isPiece: true };
+            if (isGlass) { const eg = new THREE.EdgesGeometry(rgeo); rmesh.add(new THREE.LineSegments(eg, new THREE.LineBasicMaterial({ color: 0xffd700 }))); }
+            
+            pieces.push(rmesh); correctPositions.push(new THREE.Vector3(rc.x, rc.y + boxY, pieceDepth / 2));
+
+            const rotAngle = Math.PI / 3;
+            alternativePositions = [];
+            pieces.forEach((piece, i) => {
+                const op = correctPositions[i];
+                const r = rotatePt(new THREE.Vector2(op.x, op.y - boxY), rotAngle);
+                alternativePositions.push(new THREE.Vector3(r.x, r.y + boxY, op.z));
+            });
+
+            targetPositions = correctPositions;
+            targetRotations = null;
+
+            pieces.forEach((p) => { scene.add(p); });
+            applyArrangement(defaultArrangement);
+            selected = null;
+            updateSelectedIndicator();
+        }
+
+        let isAnimating = false, animData = null;
+        const animDur = 500, delay = 150;
+
+        function startAnim(positions, rotations) {
+            if (isAnimating) return;
+            isAnimating = true;
+            animData = { pieces: [], starts: [], targets: [], sRots: [], tRots: [], t: performance.now() };
+            pieces.forEach((p, i) => {
+                animData.pieces.push(p);
+                animData.starts.push(p.position.clone());
+                animData.targets.push(positions[i].clone());
+                animData.sRots.push(p.rotation.clone());
+                animData.tRots.push(rotations[i].clone());
+            });
+        }
+
+        function updateAnim(now) {
+            if (!isAnimating) return;
+            let done = true;
+            const el = now - animData.t;
+            animData.pieces.forEach((p, i) => {
+                const st = i * delay, pe = el - st;
+                if (pe < 0) { p.position.copy(animData.starts[i]); p.rotation.copy(animData.sRots[i]); done = false; }
+                else if (pe < animDur) {
+                    const t = pe / animDur, e = 1 - Math.pow(1 - t, 3);
+                    p.position.lerpVectors(animData.starts[i], animData.targets[i], e);
+                    p.rotation.set(animData.sRots[i].x + (animData.tRots[i].x - animData.sRots[i].x) * e, animData.sRots[i].y + (animData.tRots[i].y - animData.sRots[i].y) * e, animData.sRots[i].z + (animData.tRots[i].z - animData.sRots[i].z) * e);
+                    done = false;
+                } else { p.position.copy(animData.targets[i]); p.rotation.copy(animData.tRots[i]); }
+            });
+            if (done) isAnimating = false;
+        }
+
+        function solveCorrect() {
+            targetPositions = correctPositions;
+            targetRotations = pieces.map(() => new THREE.Euler(0, 0, 0));
+            startAnim(correctPositions, targetRotations);
+        }
+
+        function solveAlt() {
+            targetPositions = alternativePositions;
+            targetRotations = pieces.map(() => new THREE.Euler(0, 0, Math.PI / 3));
+            startAnim(alternativePositions, targetRotations);
+        }
+
+        function arrangeInFrame() {
+            selected = null;
+            updateSelectedIndicator();
+            const positions = defaultArrangement.positions.map((p, i) => new THREE.Vector3(p.x, p.y, 0));
+            const rotations = defaultArrangement.rotations.map(r => new THREE.Euler(0, 0, r));
+            startAnim(positions, rotations);
+        }
+
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+        const dragPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+        const intersection = new THREE.Vector3();
+        const offset = new THREE.Vector3();
+
+        function getMouseWorld(event) {
+            const rect = renderer.domElement.getBoundingClientRect();
+            const x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+            const y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+            mouse.set(x, y);
+            raycaster.setFromCamera(mouse, camera);
+            if (raycaster.ray.intersectPlane(dragPlane, intersection)) return intersection.clone();
+            return null;
+        }
+
+        function findTopPiece(object) {
+            let current = object;
+            while (current) {
+                if (current.userData && current.userData.isPiece) return current;
+                current = current.parent;
+            }
+            return object;
+        }
+
+        let isDragging = false;
+
+        renderer.domElement.addEventListener('pointerdown', (event) => {
+            if (isAnimating) return;
+            
+            mouse.set(
+                ((event.clientX - renderer.domElement.getBoundingClientRect().left) / renderer.domElement.getBoundingClientRect().width) * 2 - 1,
+                -((event.clientY - renderer.domElement.getBoundingClientRect().top) / renderer.domElement.getBoundingClientRect().height) * 2 + 1
+            );
+            
+            raycaster.setFromCamera(mouse, camera);
+            const hits = raycaster.intersectObjects(pieces, true);
+            
+            if (hits.length > 0) {
+                const hitObject = findTopPiece(hits[0].object);
+                selected = hitObject;
+                updateSelectedIndicator();
+                isDragging = true;
+                
+                const worldPos = getMouseWorld(event);
+                if (worldPos) {
+                    offset.copy(selected.position).sub(worldPos);
+                }
+                
+                event.stopPropagation();
+                event.preventDefault();
+            } else {
+                selected = null;
+                updateSelectedIndicator();
+                isDragging = false;
+            }
+        });
+
+        window.addEventListener('pointermove', (event) => {
+            if (!selected || !isDragging || isAnimating) return;
+            event.preventDefault();
+            
+            const worldPos = getMouseWorld(event);
+            if (worldPos) {
+                selected.position.x = worldPos.x + offset.x;
+                selected.position.y = worldPos.y + offset.y;
+            }
+        });
+
+        window.addEventListener('pointerup', (event) => {
+            if (!selected || isAnimating) {
+                isDragging = false;
+                return;
+            }
+            
+            if (isDragging) {
+                const i = pieces.indexOf(selected);
+                const t = targetPositions[i];
+                
+                if (t && selected.position.distanceTo(t) < 1.5) {
+                    selected.position.copy(t);
+                    if (targetRotations) selected.rotation.copy(targetRotations[i]);
+                    else selected.rotation.set(0, 0, 0);
+                }
+            }
+            
+            isDragging = false;
+            // لا نلغي التحديد ليتمكن المستخدم من استخدام أزرار التدوير
+        });
+
+        renderer.domElement.addEventListener('touchstart', (e) => e.preventDefault());
+        renderer.domElement.addEventListener('touchmove', (e) => e.preventDefault());
+
+        document.getElementById('solve-btn').onclick = () => { if (!isAnimating) { selected = null; updateSelectedIndicator(); solveCorrect(); } };
+        document.getElementById('solve-alt-btn').onclick = () => { if (!isAnimating) { selected = null; updateSelectedIndicator(); solveAlt(); } };
+        document.getElementById('reset-btn').onclick = () => { if (!isAnimating) arrangeInFrame(); };
+        
+        document.getElementById('rotate-cw-btn').onclick = (event) => {
+            event.stopPropagation();
+            event.preventDefault();
+            if (isAnimating) return;
+            if (selected) {
+                selected.rotateZ(ROTATION_ANGLE);
+            }
+        };
+        
+        document.getElementById('rotate-ccw-btn').onclick = (event) => {
+            event.stopPropagation();
+            event.preventDefault();
+            if (isAnimating) return;
+            if (selected) {
+                selected.rotateZ(-ROTATION_ANGLE);
+            }
+        };
+        
+        document.getElementById('switch-btn').onclick = () => {
+            if (isAnimating) return;
+            selected = null;
+            updateSelectedIndicator();
+            isGlass = !isGlass;
+            document.getElementById('switch-btn').textContent = isGlass ? '📄 النسخة الكلاسيكية' : '💎 النسخة الزجاجية';
+            document.getElementById('info').textContent = isGlass ? '💎 بازل المسدس الزجاجي | صفحة فكرة وتطبيق ذكي' : '🟦 بازل المسدس | صفحة فكرة وتطبيق ذكي';
+            buildScene();
+        };
+
+        function updateCamera() {
+            const asp = window.innerWidth / window.innerHeight;
+            const top = boxY + outerR + 0.3, bottom = frameY - frameHeight / 2 - 0.5;
+            const hH = (top - bottom) / 2, hW = hH * asp;
+            camera.left = -hW; camera.right = hW;
+            camera.top = hH; camera.bottom = -hH;
+            camera.position.set(0, (top + bottom) / 2, 10);
+            camera.lookAt(0, (top + bottom) / 2, 0);
+            camera.updateProjectionMatrix();
+        }
+        updateCamera();
+        buildScene();
+
+        function animate(now) {
+            requestAnimationFrame(animate);
+            if (isAnimating) updateAnim(now);
+            renderer.render(scene, camera);
+        }
+        requestAnimationFrame(animate);
+
+        window.addEventListener('resize', () => {
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            updateCamera();
+        });
+    </script>
+</body>
+</html>
