@@ -486,11 +486,12 @@
         const dragPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
         const intersection = new THREE.Vector3();
         const offset = new THREE.Vector3();
+        let isDragging = false;
 
-        function getMouseWorld(event) {
+        function getMouseWorld(clientX, clientY) {
             const rect = renderer.domElement.getBoundingClientRect();
-            const x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-            const y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+            const x = ((clientX - rect.left) / rect.width) * 2 - 1;
+            const y = -((clientY - rect.top) / rect.height) * 2 + 1;
             mouse.set(x, y);
             raycaster.setFromCamera(mouse, camera);
             if (raycaster.ray.intersectPlane(dragPlane, intersection)) return intersection.clone();
@@ -506,15 +507,13 @@
             return object;
         }
 
-        let isDragging = false;
-
-        renderer.domElement.addEventListener('pointerdown', (event) => {
+        function handlePointerDown(clientX, clientY) {
             if (isAnimating) return;
             
-            mouse.set(
-                ((event.clientX - renderer.domElement.getBoundingClientRect().left) / renderer.domElement.getBoundingClientRect().width) * 2 - 1,
-                -((event.clientY - renderer.domElement.getBoundingClientRect().top) / renderer.domElement.getBoundingClientRect().height) * 2 + 1
-            );
+            const rect = renderer.domElement.getBoundingClientRect();
+            const x = ((clientX - rect.left) / rect.width) * 2 - 1;
+            const y = -((clientY - rect.top) / rect.height) * 2 + 1;
+            mouse.set(x, y);
             
             raycaster.setFromCamera(mouse, camera);
             const hits = raycaster.intersectObjects(pieces, true);
@@ -525,32 +524,30 @@
                 updateSelectedIndicator();
                 isDragging = true;
                 
-                const worldPos = getMouseWorld(event);
+                const worldPos = getMouseWorld(clientX, clientY);
                 if (worldPos) {
                     offset.copy(selected.position).sub(worldPos);
                 }
-                
-                event.stopPropagation();
-                event.preventDefault();
+                return true;
             } else {
                 selected = null;
                 updateSelectedIndicator();
                 isDragging = false;
+                return false;
             }
-        });
+        }
 
-        window.addEventListener('pointermove', (event) => {
+        function handlePointerMove(clientX, clientY) {
             if (!selected || !isDragging || isAnimating) return;
-            event.preventDefault();
             
-            const worldPos = getMouseWorld(event);
+            const worldPos = getMouseWorld(clientX, clientY);
             if (worldPos) {
                 selected.position.x = worldPos.x + offset.x;
                 selected.position.y = worldPos.y + offset.y;
             }
-        });
+        }
 
-        window.addEventListener('pointerup', (event) => {
+        function handlePointerUp() {
             if (!selected || isAnimating) {
                 isDragging = false;
                 return;
@@ -568,11 +565,47 @@
             }
             
             isDragging = false;
-            // لا نلغي التحديد ليتمكن المستخدم من استخدام أزرار التدوير
+        }
+
+        // أحداث الماوس
+        renderer.domElement.addEventListener('pointerdown', (event) => {
+            handlePointerDown(event.clientX, event.clientY);
+            event.stopPropagation();
+            event.preventDefault();
         });
 
-        renderer.domElement.addEventListener('touchstart', (e) => e.preventDefault());
-        renderer.domElement.addEventListener('touchmove', (e) => e.preventDefault());
+        window.addEventListener('pointermove', (event) => {
+            if (isDragging) {
+                handlePointerMove(event.clientX, event.clientY);
+                event.preventDefault();
+            }
+        });
+
+        window.addEventListener('pointerup', (event) => {
+            handlePointerUp();
+        });
+
+        // أحداث اللمس للهاتف
+        renderer.domElement.addEventListener('touchstart', (event) => {
+            event.preventDefault();
+            if (event.touches.length === 1) {
+                const touch = event.touches[0];
+                handlePointerDown(touch.clientX, touch.clientY);
+            }
+        }, { passive: false });
+
+        renderer.domElement.addEventListener('touchmove', (event) => {
+            event.preventDefault();
+            if (isDragging && event.touches.length === 1) {
+                const touch = event.touches[0];
+                handlePointerMove(touch.clientX, touch.clientY);
+            }
+        }, { passive: false });
+
+        renderer.domElement.addEventListener('touchend', (event) => {
+            event.preventDefault();
+            handlePointerUp();
+        });
 
         document.getElementById('solve-btn').onclick = () => { if (!isAnimating) { selected = null; updateSelectedIndicator(); solveCorrect(); } };
         document.getElementById('solve-alt-btn').onclick = () => { if (!isAnimating) { selected = null; updateSelectedIndicator(); solveAlt(); } };
